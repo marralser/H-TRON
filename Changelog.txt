@@ -1,0 +1,4 @@
+- Added EGA, VGA graphics support
+- Added CGA graphics support, by changing geometry and slowing the Tron's
+
+- Added Amstrad PC1512/PC1640 joystick support 
