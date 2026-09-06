@@ -12,3 +12,8 @@ I added just one new feature:  support for the Amstrad PC 1512/1640 digital joys
 MR, in Sept. 2026
 
 Writing this on the Amstrad PC1640, using MS Word 4.0 for DOS.
+
+- HTRON.exe for the Hercules Graphic Card
+- CGAtron.exe for CGA (try that one first :-))
+- EGAtron.exe for EGA
+- VGAtron.exe for VGA
