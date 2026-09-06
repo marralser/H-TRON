@@ -2,3 +2,6 @@
 - Added CGA graphics support, by changing geometry and slowing the Tron's
 
 - Added Amstrad PC1512/PC1640 joystick support 
+
+joytest2.c is a simple code to test and read out the keycodes of the Amstrad PC 1512/ PC1640 keycode.
+Compiles in Borland Turbo C for DOS.  
