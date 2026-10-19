@@ -1,0 +1,9 @@
+CC = wcc
+CFLAGS = -bt=dos -ml -0 -os -s -w4 -I=GEMBIND/include
+GEMLIB = GEMBIND/lib/gembnd-l.lib
+GEMMAIN = GEMBIND/samples/main-l.obj
+all: HTRONGEM.APP
+HTRONGEM.OBJ: HTRONGEM.C gem_compat.h
+	$(CC) $(CFLAGS) -fo=$@ HTRONGEM.C
+HTRONGEM.APP: HTRONGEM.OBJ $(GEMLIB) $(GEMMAIN)
+	wlink system dos option stack=16384 name HTRONGEM.APP file HTRONGEM.OBJ,$(GEMMAIN) library $(GEMLIB)
