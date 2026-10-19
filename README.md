@@ -1,4 +1,4 @@
-# H-TRON sfor DOS and GEM
+# H-TRON for DOS and GEM
 Simple H-TRON game with expanded graphic card (DOS), GEM, and Amstrad joystick support
 
 In 2016 RobertK wrote H-TRON, a simple Tron game (https://www.mobygames.com/game/89372/h-tron/). He wrote it on a Schneider Euro PC using Borland TurboC and natively for the Hercules graphics card. Isn't that cool - a native Hercules game developed on the EuroPC in 2016?
