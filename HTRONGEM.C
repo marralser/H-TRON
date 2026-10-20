@@ -12,9 +12,12 @@
 #define GW 64
 #define GH 32
 #define WIN_KIND (NAME|CLOSER|MOVER|SIZER)
-#define TICK_MS 100
+#define TICK_SLOW 160
+#define TICK_MEDIUM 120
+#define TICK_FAST 100
+static WORD tick_ms=TICK_MEDIUM;
 static WORD vh,win,wx,wy,ww,wh,deskx,desky,deskw,deskh;
-static WORD cellw,cellh,boardx,boardy;
+static WORD cellw,cellh,boardx,boardy,gem_char_width=8;
 /* OpenGEM indexed color: set VDI palette entry 3 to maroon where supported. */
 #define TRON1_COLOR 3
 #define TRON2_COLOR 4
@@ -91,11 +94,27 @@ static void save_hof(void){
 }
 static void redraw(WORD,WORD,WORD,WORD);
 static void insert_hof(void);
+static void new_match(int);
 /* Modal GEM pop-up windows: preserve the game board beneath them. */
 static WORD popup= -1;
 static WORD popx,popy,popw,poph;
 static void popup_text(WORD x,WORD y,const char *str){
  vst_color(vh,1);v_gtext(vh,x,y,(char *)str);
+}
+/* Two mouse-operable GEM-style actions in the Hall of Fame window. */
+static WORD btn_y,btn_h,btn_w,btn_play_x,btn_exit_x;
+static void popup_buttons(void){
+ WORD a[4];
+ btn_h=21;btn_w=(popw-36)/2;
+ if(btn_w<45)btn_w=45;
+ btn_y=popy+poph-btn_h-9;
+ btn_play_x=popx+12;btn_exit_x=popx+popw-btn_w-12;
+ a[1]=btn_y;a[3]=btn_y+btn_h;
+ vsf_interior(vh,1);vsf_color(vh,8);
+ a[0]=btn_play_x;a[2]=btn_play_x+btn_w;v_bar(vh,a);
+ a[0]=btn_exit_x;a[2]=btn_exit_x+btn_w;v_bar(vh,a);
+ popup_text(btn_play_x+7,btn_y+15,"Play again");
+ popup_text(btn_exit_x+7,btn_y+15,"Exit");
 }
 static void popup_draw(const char *heading,const char *body,int entry){
  WORD a[4],x,y,w,h,clip[4];char scoreline[75];int i;
@@ -121,7 +140,7 @@ static void popup_draw(const char *heading,const char *body,int entry){
     sprintf(scoreline,"%d. %-20.20s %ld",i+1,hof[i].name,hof[i].score);
     popup_text(popx+12,popy+43+i*21,scoreline);
    }
-   popup_text(popx+12,popy+143,"Press ENTER or ESC to close");
+   popup_buttons();
   }
   wind_get(popup,WF_NEXTXYWH,&x,&y,&w,&h);
  }
@@ -129,7 +148,7 @@ static void popup_draw(const char *heading,const char *body,int entry){
 }
 static int popup_open(char *title){
  WORD x,y,w,h;
- popup=wind_create(NAME|MOVER,deskx,desky,deskw,deskh);
+ popup=wind_create(NAME|MOVER|CLOSER,deskx,desky,deskw,deskh);
  if(popup<0){form_alert(1,"[3][Cannot create GEM popup][OK]");return 0;}
  wind_set(popup,WF_NAME,FP_OFF(title),FP_SEG(title),0,0);
  w=deskw>390?390:deskw-12;h=deskh>215?215:deskh-12;
@@ -142,13 +161,15 @@ static void popup_close(void){
  if(popup>=0){wind_close(popup);wind_delete(popup);popup=-1;}
  redraw(wx,wy,ww,wh);
 }
-static void popup_event(char *title,int entry){
+/* Returns 0=closed/cancel, 1=Play again, 2=Exit. */
+static int popup_event(char *title,int entry){
  WORD msg[8],ev;UWORD mx,my,mb,ks,key,clicks;
- int c;
- if(!popup_open(title))return;
+ int c,choice=0;
+ if(!popup_open(title))return 0;
  popup_draw(title,"",entry);
  for(;;){
-  ev=evnt_multi(MU_MESAG|MU_KEYBD,0,0,0,0,0,0,0,0,0,0,0,0,0,msg,0,0,
+  ev=evnt_multi(MU_MESAG|MU_KEYBD|MU_BUTTON,
+    1,1,1,0,0,0,0,0,0,0,0,0,0,msg,0,0,
     &mx,&my,&mb,&ks,&key,&clicks);
   if(ev&MU_MESAG){
    if(msg[0]==WM_REDRAW){
@@ -156,12 +177,19 @@ static void popup_event(char *title,int entry){
     else if(msg[3]==win)redraw(msg[4],msg[5],msg[6],msg[7]);
    }
    if(msg[0]==WM_CLOSED&&msg[3]==popup)break;
-   if(msg[0]==WM_TOPPED&&msg[3]==popup)wind_set(popup,WF_TOP,0,0,0,0);
+   if(msg[0]==WM_TOPPED&&msg[3]==popup)
+    wind_set(popup,WF_TOP,0,0,0,0);
+  }
+  if(ev&MU_BUTTON && !entry){
+   if(my>=btn_y&&my<btn_y+btn_h){
+    if(mx>=btn_play_x&&mx<btn_play_x+btn_w){choice=1;break;}
+    if(mx>=btn_exit_x&&mx<btn_exit_x+btn_w){choice=2;break;}
+   }
   }
   if(ev&MU_KEYBD){
    c=key&255;
    if(c==27)break;
-   if(c==13){if(entry)insert_hof();break;}
+   if(c==13){if(entry)insert_hof();else choice=1;break;}
    if(entry){
     if(c==8){if(name_len)player_name[--name_len]=0;}
     else if(c>=32&&c<=126&&c!='|'&&name_len<30){
@@ -171,11 +199,13 @@ static void popup_event(char *title,int entry){
    }
   }
  }
- popup_close();
+ popup_close();return choice;
 }
 static void show_hof(void){
  static char t[]="H-Tron Hall of Fame";
- popup_event(t,0);
+ int choice=popup_event(t,0);
+ if(choice==1){new_match(players);redraw(wx,wy,ww,wh);}
+ else if(choice==2)quit=1;
 }
 static void show_info(void){
  form_alert(1,"[1][H-Tron for OpenGEM|Original Hercules DOS game:|RobertK, December 2016|GEM / DOS expansion: 2026|github.com/marralser/H-TRON][OK]");
@@ -275,7 +305,7 @@ static void tick(void){
  int i,nx[2],ny[2],hit[2];
  changed=0;
  if(!running||paused||entry_mode||match_over)return;
- if(players==1 && ++round_ticks>=10){points+=20L;round_ticks=0;}
+ if(players==1 && ++round_ticks>=1000/tick_ms){points+=20L;round_ticks=0;}
  /* Right cycle (index 1) is the human in solo mode. */
  if(players==0){cpu_turn(0);cpu_turn(1);}
  else if(players==1)cpu_turn(0);
@@ -317,7 +347,11 @@ static void draw(void){
  else if(!running)strcpy(line,"SPACE start  0 demo  1 solo  2 duel  H hall  I info");
  else if(paused)strcpy(line,"PAUSED - press P to continue");
  else strcpy(line,"Arrows: right Tron  |  A/D: left Tron  |  P: pause");
- vst_color(vh,1);v_gtext(vh,wx+6,boardy+GH*cellh+13,line);
+ vst_color(vh,1);
+ {WORD textx=wx+(ww-(WORD)strlen(line)*gem_char_width)/2;
+  if(textx<wx+2)textx=wx+2;
+  v_gtext(vh,textx,boardy+GH*cellh+13,line);
+ }
 }
 /* Draw just the two newly occupied cells, respecting GEM's visible rectangles.
    Never erase the background in this routine. */
@@ -358,11 +392,17 @@ static void redraw(WORD rx,WORD ry,WORD rw,WORD rh){
 }
 /* Native GEM three-button startup dialog. Buttons return 1, 2, or 3. */
 static void welcome_dialog(void){
- WORD choice;
+ WORD choice,speed;
  choice=form_alert(1,
   "[1][Welcome to HTRON for GEM.|How would you like to play?]"
   "[DEMO|1 Player|2 Players]");
  if(choice<1||choice>3)choice=2;
+ speed=form_alert(2,
+  "[1][Select Tron movement speed:|Slow for low-resolution GEM screens.]"
+  "[Slow|Medium|Fast]");
+ if(speed==1)tick_ms=TICK_SLOW;
+ else if(speed==3)tick_ms=TICK_FAST;
+ else tick_ms=TICK_MEDIUM;
  new_match(choice-1);
  redraw(wx,wy,ww,wh);
 }
@@ -388,6 +428,7 @@ WORD GEMAIN(WORD argc, char *argv[]){
  UWORD mx,my,buttons,shifts,key,clicks;
  if(appl_init(NULL)<0)return 1;
  vh=graf_handle(&cw,&ch,&bw,&bh);
+ gem_char_width=cw>0?cw:8;
  for(i=0;i<10;i++)in[i]=1;in[10]=2;
  v_opnvwk(in,&vh,out);
  configure_colors();
@@ -404,7 +445,7 @@ WORD GEMAIN(WORD argc, char *argv[]){
  welcome_dialog();
  while(!quit){
   event=evnt_multi(MU_MESAG|MU_KEYBD|MU_BUTTON|MU_TIMER,1,1,1,
-   0,0,0,0,0,0,0,0,0,0,msg,TICK_MS,0,
+   0,0,0,0,0,0,0,0,0,0,msg,tick_ms,0,
    &mx,&my,&buttons,&shifts,&key,&clicks);
   if(event&MU_KEYBD){
    int oldrunning=running,oldpaused=paused,oldplayers=players;
