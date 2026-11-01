@@ -1,0 +1,13 @@
+## License and Third-Party Code Notice
+
+Copyright (c) 2026 
+
+All original source code developed by the author of this project is released under the **MIT License**.
+
+Portions of this project may incorporate source code from an earlier hobby project developed by another author. Such third-party code remains the intellectual property of its respective author and is included under the MIT License only where the original author has explicitly permitted this or where the original license allows it.
+
+Otherwise, the original licensing terms and permissions continue to apply.
+
+All third-party contributions are acknowledged where applicable.
+
+The software is provided "AS IS", without warranty of any kind, express or implied.
