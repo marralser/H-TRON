@@ -25,10 +25,12 @@ static WORD cellw,cellh,boardx,boardy,gem_char_width=8;
 static WORD maroon_rgb[3]={502,0,0};
 static WORD grey_rgb[3]={650,650,650};
 static unsigned char field[GH][GW];
-static int px[2],py[2],dir[2],alive[2],score[2];
+static int px[2],py[2],dir[2],alive[2],lives[2];
 static int players=1,running=0,paused=0,quit=0;
 static int match_over=0, demo_wait=0;
-/* First to two victories is best-of-three; drawn rounds are replayed. */
+static int hof_pending=0; /* Show Hall of Fame exactly once at game over. */
+/* Original-style five lives per Tron; Hall of Fame after game over. */
+#define START_LIVES 5
 static char name[]="H-Tron for GEM";
 static char line[90];
 /* Native resource-free AES Desk menu, following LMS-GEM. */
@@ -101,24 +103,49 @@ static WORD popx,popy,popw,poph;
 static void popup_text(WORD x,WORD y,const char *str){
  vst_color(vh,1);v_gtext(vh,x,y,(char *)str);
 }
-/* Two mouse-operable GEM-style actions in the Hall of Fame window. */
-static WORD btn_y,btn_h,btn_w,btn_play_x,btn_exit_x;
+/* Actual AES G_BUTTON objects, not VDI-painted imitation buttons.
+   Child coordinates are pixel offsets relative to the popup work area. */
+#ifndef G_BUTTON
+#define G_BUTTON 26
+#endif
+#ifndef SELECTABLE
+#define SELECTABLE 0x0001
+#endif
+#ifndef EXIT
+#define EXIT 0x0004
+#endif
+static OBJECT hof_buttons[3];
+static char play_label[]="Play again";
+static char exit_label[]="Exit";
+static void setup_hof_buttons(void){
+ WORD bw=(popw-36)/2;
+ WORD by=poph-33;
+ if(bw<65)bw=65;
+ hof_buttons[0].ob_next=-1;
+ hof_buttons[0].ob_head=1;hof_buttons[0].ob_tail=2;
+ hof_buttons[0].ob_type=G_IBOX;hof_buttons[0].ob_flags=NONE;
+ hof_buttons[0].ob_state=NORMAL;hof_buttons[0].ob_spec=0L;
+ hof_buttons[0].ob_x=popx;hof_buttons[0].ob_y=popy;
+ hof_buttons[0].ob_width=popw;hof_buttons[0].ob_height=poph;
+ hof_buttons[1].ob_next=2;hof_buttons[1].ob_head=-1;hof_buttons[1].ob_tail=-1;
+ hof_buttons[1].ob_type=G_BUTTON;hof_buttons[1].ob_flags=SELECTABLE|EXIT;
+ hof_buttons[1].ob_state=NORMAL;hof_buttons[1].ob_spec=(LPVOID)play_label;
+ hof_buttons[1].ob_x=12;hof_buttons[1].ob_y=by;
+ hof_buttons[1].ob_width=bw;hof_buttons[1].ob_height=22;
+ hof_buttons[2].ob_next=0;hof_buttons[2].ob_head=-1;hof_buttons[2].ob_tail=-1;
+ hof_buttons[2].ob_type=G_BUTTON;hof_buttons[2].ob_flags=SELECTABLE|EXIT|LASTOB;
+ hof_buttons[2].ob_state=NORMAL;hof_buttons[2].ob_spec=(LPVOID)exit_label;
+ hof_buttons[2].ob_x=popw-bw-12;hof_buttons[2].ob_y=by;
+ hof_buttons[2].ob_width=bw;hof_buttons[2].ob_height=22;
+}
 static void popup_buttons(void){
- WORD a[4];
- btn_h=21;btn_w=(popw-36)/2;
- if(btn_w<45)btn_w=45;
- btn_y=popy+poph-btn_h-9;
- btn_play_x=popx+12;btn_exit_x=popx+popw-btn_w-12;
- a[1]=btn_y;a[3]=btn_y+btn_h;
- vsf_interior(vh,1);vsf_color(vh,8);
- a[0]=btn_play_x;a[2]=btn_play_x+btn_w;v_bar(vh,a);
- a[0]=btn_exit_x;a[2]=btn_exit_x+btn_w;v_bar(vh,a);
- popup_text(btn_play_x+7,btn_y+15,"Play again");
- popup_text(btn_exit_x+7,btn_y+15,"Exit");
+ /* obj_draw uses the AES button bevel, focus and text renderer. */
+ objc_draw(hof_buttons,0,2,popx,popy,popw,poph);
 }
 static void popup_draw(const char *heading,const char *body,int entry){
  WORD a[4],x,y,w,h,clip[4];char scoreline[75];int i;
  if(popup<0)return;
+ graf_mouse(256,0L); /* M_OFF: prevent mouse save-under artifacts */
  wind_get(popup,WF_FIRSTXYWH,&x,&y,&w,&h);
  while(w>0&&h>0){
   a[0]=x;a[1]=y;a[2]=x+w-1;a[3]=y+h-1;
@@ -145,6 +172,7 @@ static void popup_draw(const char *heading,const char *body,int entry){
   wind_get(popup,WF_NEXTXYWH,&x,&y,&w,&h);
  }
  clip[0]=clip[1]=clip[2]=clip[3]=0;vs_clip(vh,0,clip);
+ graf_mouse(257,0L); /* M_ON */
 }
 static int popup_open(char *title){
  WORD x,y,w,h;
@@ -155,6 +183,7 @@ static int popup_open(char *title){
  x=deskx+(deskw-w)/2;y=desky+(deskh-h)/2;
  wind_open(popup,x,y,w,h);
  wind_get(popup,WF_WORKXYWH,&popx,&popy,&popw,&poph);
+ setup_hof_buttons();
  return 1;
 }
 static void popup_close(void){
@@ -181,10 +210,8 @@ static int popup_event(char *title,int entry){
     wind_set(popup,WF_TOP,0,0,0,0);
   }
   if(ev&MU_BUTTON && !entry){
-   if(my>=btn_y&&my<btn_y+btn_h){
-    if(mx>=btn_play_x&&mx<btn_play_x+btn_w){choice=1;break;}
-    if(mx>=btn_exit_x&&mx<btn_exit_x+btn_w){choice=2;break;}
-   }
+   WORD obj=objc_find(hof_buttons,0,2,(WORD)mx,(WORD)my);
+   if(obj==1 || obj==2){choice=(int)obj;break;}
   }
   if(ev&MU_KEYBD){
    c=key&255;
@@ -223,11 +250,10 @@ static void insert_hof(void){
 }
 static void score_round_end(int won){
  if(players!=1)return;
- /* Award turn and survival bonuses for each round, but never submit
-    a Hall of Fame result before the whole best-of-three match ends. */
+ /* Award round bonuses but submit only once a Tron runs out of lives. */
  points+=60L;
  if(won)points+=400L;
- if(score[0]<2 && score[1]<2)return;
+ if(!match_over)return;
  if(qualifies(points)){
   final_points=points;entry_mode=1;name_len=0;player_name[0]=0;
  }
@@ -270,9 +296,10 @@ static void new_round(void){
 }
 static void new_match(int newplayers){
  players=newplayers;
- score[0]=score[1]=0;
+ lives[0]=lives[1]=START_LIVES;
  points=0;
  match_over=0;
+ hof_pending=0;
  new_round();
 }
 static int vacant(int x,int y){
@@ -323,9 +350,15 @@ static void tick(void){
  }
  if(!alive[0]||!alive[1]){
   running=0;
-  if(alive[0])score[0]++;
-  if(alive[1])score[1]++;
-  if(score[0]>=2 || score[1]>=2)match_over=1;
+  /* A collision consumes one life.  A head-on draw costs both. */
+  if(!alive[0] && lives[0]>0)lives[0]--;
+  if(!alive[1] && lives[1]>0)lives[1]--;
+  if(lives[0]==0 || lives[1]==0){
+   match_over=1;
+   /* All human games show their Hall of Fame at the end, even if
+      the final score does not qualify for a name entry. */
+   if(players!=0)hof_pending=1;
+  }
   score_round_end(alive[1]);
   if(players==0)demo_wait=7;
  }
@@ -333,7 +366,7 @@ static void tick(void){
 static void draw(void){
  int x,y,c;
  bar(wx,wy,ww,wh,0);
- sprintf(line,"TRON 1 %d : %d TRON 2  (best of 3)",score[0],score[1]);
+ sprintf(line,"TRON 1: %d lives    TRON 2: %d lives",lives[0],lives[1]);
  vst_color(vh,1);v_gtext(vh,wx+6,wy+14,line);
 
  for(y=0;y<GH;y++)for(x=0;x<GW;x++){
@@ -343,7 +376,7 @@ static void draw(void){
  }
  border();
  if(entry_mode)strcpy(line,"Match finished - new Hall of Fame entry!");
- else if(match_over)strcpy(line,"Match finished - SPACE for a new match");
+ else if(match_over)strcpy(line,"Game over - SPACE for five new lives");
  else if(!running)strcpy(line,"SPACE start  0 demo  1 solo  2 duel  H hall  I info");
  else if(paused)strcpy(line,"PAUSED - press P to continue");
  else strcpy(line,"Arrows: right Tron  |  A/D: left Tron  |  P: pause");
@@ -359,6 +392,7 @@ static void draw_new_cells(void){
  WORD x,y,w,h,a[4],x1,y1,x2,y2;
  int i;
  if(!changed)return;
+ graf_mouse(256,0L); /* M_OFF */
  wind_get(win,WF_FIRSTXYWH,&x,&y,&w,&h);
  while(w>0&&h>0){
   x1=x>wx?x:wx;y1=y>wy?y:wy;
@@ -374,9 +408,11 @@ static void draw_new_cells(void){
   wind_get(win,WF_NEXTXYWH,&x,&y,&w,&h);
  }
  a[0]=a[1]=a[2]=a[3]=0;vs_clip(vh,0,a);
+ graf_mouse(257,0L); /* M_ON */
 }
 static void redraw(WORD rx,WORD ry,WORD rw,WORD rh){
  WORD x,y,w,h,a[4],x1,y1,x2,y2;
+ graf_mouse(256,0L); /* M_OFF */
  wind_get(win,WF_FIRSTXYWH,&x,&y,&w,&h);
  while(w>0&&h>0){
   x1=x>rx?x:rx;y1=y>ry?y:ry;
@@ -389,6 +425,7 @@ static void redraw(WORD rx,WORD ry,WORD rw,WORD rh){
   wind_get(win,WF_NEXTXYWH,&x,&y,&w,&h);
  }
  a[0]=a[1]=a[2]=a[3]=0;vs_clip(vh,0,a);
+ graf_mouse(257,0L); /* M_ON */
 }
 /* Native GEM three-button startup dialog. Buttons return 1, 2, or 3. */
 static void welcome_dialog(void){
@@ -485,13 +522,17 @@ WORD GEMAIN(WORD argc, char *argv[]){
      redraw(wx,wy,ww,wh);
     }
    }
-   /* Refresh the score/status only after a round finishes. */
+   /* Refresh life counters only after a round finishes. */
    if(wasrunning&&!running){
     redraw(wx,wy,ww,wh);
-    if(entry_mode){
+    if(hof_pending){
      static char entry_title[]="H-Tron - New High Score";
-     popup_event(entry_title,1);
-     entry_mode=0;
+     /* Clear the pending flag before invoking modal GEM windows. */
+     hof_pending=0;
+     if(entry_mode){
+      popup_event(entry_title,1);
+      entry_mode=0;
+     }
      show_hof();
     }
    }
